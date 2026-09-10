@@ -135,6 +135,9 @@ jobs:
           set -euo pipefail
           # The values are workflow inputs owned by the caller repository. Splitting them
           # here preserves support for multiple Maven flags without rebuilding the project.
+          options=()
+          extra_args=()
+          goals=()
           read -r -a options <<< "$MAVEN_OPTIONS"
           read -r -a extra_args <<< "$MAVEN_EXTRA_ARGS"
           read -r -a goals <<< "$MAVEN_GOALS"
@@ -178,8 +181,24 @@ jobs:
             --hop-version "$HOP_VERSION" \
             --plugin-root "$PLUGIN_ROOT" \
             --output "$GITHUB_WORKSPACE/.ci/verified/manifest.json"
+          zip_path="$(python3 - "$ZIP_GLOB" <<'PY'
+          from pathlib import Path
+          import sys
+
+          matches = sorted(Path.cwd().glob(sys.argv[1]))
+          if len(matches) != 1:
+              raise SystemExit(f"Expected exactly one ZIP for {sys.argv[1]!r}, found {len(matches)}")
+          print(matches[0])
+          PY
+          )"
           cp "$GITHUB_WORKSPACE/.ci/verified/manifest.json" \
             "$GITHUB_WORKSPACE/.ci/verified/${artifact_name}.manifest.json"
+          upload_dir="$GITHUB_WORKSPACE/.ci/verified/upload"
+          rm -rf "$upload_dir"
+          mkdir -p "$upload_dir"
+          cp "$zip_path" "$upload_dir/$(basename "$zip_path")"
+          cp "$GITHUB_WORKSPACE/.ci/verified/${artifact_name}.manifest.json" \
+            "$upload_dir/${artifact_name}.manifest.json"
           echo "ARTIFACT_NAME=$artifact_name" >> "$GITHUB_ENV"
 
       - name: Upload verified plugin ZIP and manifest
@@ -187,9 +206,7 @@ jobs:
         with:
           name: ${{ inputs.artifact-name-prefix }}-${{ matrix.os }}-jdk${{ matrix.java }}
           if-no-files-found: error
-          path: |
-            ${{ inputs.maven-working-directory }}/${{ inputs.zip-glob }}
-            ${{ github.workspace }}/.ci/verified/${{ inputs.artifact-name-prefix }}-${{ matrix.os }}-jdk${{ matrix.java }}.manifest.json
+          path: ${{ github.workspace }}/.ci/verified/upload/*
 
       - name: Retain test reports
         if: always()
