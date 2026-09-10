@@ -85,7 +85,7 @@ on:
         default: ''
         type: string
       dependency-version:
-        description: Exact version to use for the locally installed dependency JAR
+        description: Declared Maven version to use for the locally installed dependency JAR
         required: false
         default: ''
         type: string
@@ -231,11 +231,8 @@ jobs:
           )"
           dependency_version="$DEPENDENCY_VERSION"
           version_file="$DEPENDENCY_PATH/resolved-version.txt"
-          if [[ -f "$version_file" ]]; then
-            dependency_version="$(tr -d '\r\n' < "$version_file")"
-          fi
           if [[ -z "$dependency_version" ]]; then
-            echo "The exact dependency version is missing" >&2
+            echo "The dependency Maven version is missing" >&2
             exit 1
           fi
           maven_local_repository="$(python3 - <<'PY'
@@ -246,7 +243,11 @@ jobs:
           print((maven_user_home / "repository").as_posix())
           PY
           )"
-          echo "Installing dependency at resolved version $dependency_version"
+          resolved_version="(not recorded)"
+          if [[ -f "$version_file" ]]; then
+            resolved_version="$(tr -d '\r\n' < "$version_file")"
+          fi
+          echo "Installing selected snapshot ZIP $resolved_version as Maven coordinate $dependency_version"
           python3 "$GITHUB_WORKSPACE/.ci/hop-plugin-ci/scripts/install_maven_jar_from_zip.py" \
             --zip "$dependency_zip" \
             --jar-glob "$DEPENDENCY_JAR_GLOB" \

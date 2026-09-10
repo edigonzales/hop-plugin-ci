@@ -51,7 +51,7 @@ def install_in_local_repository(
     artifact_id: str,
     version: str,
 ) -> Path:
-    """Install the JAR under one exact coordinate without embedded-POM inference."""
+    """Install the selected dependency under its declared Maven coordinate."""
     coordinate_directory = local_repository.joinpath(*group_id.split("."), artifact_id, version)
     coordinate_directory.mkdir(parents=True, exist_ok=True)
     installed_jar = coordinate_directory / f"{artifact_id}-{version}.jar"
@@ -67,13 +67,17 @@ def main() -> int:
     parser.add_argument("--jar-glob", required=True)
     parser.add_argument("--group-id", required=True)
     parser.add_argument("--artifact-id", required=True)
-    parser.add_argument("--version", required=True)
+    parser.add_argument(
+        "--version",
+        required=True,
+        help="Declared Maven version, normally the unchanged base -SNAPSHOT version",
+    )
     parser.add_argument("--maven-settings", required=True, type=Path)
     parser.add_argument(
         "--local-repository",
         type=Path,
         default=Path.home() / ".m2" / "repository",
-        help="Maven local repository to receive the exact coordinate",
+        help="Maven local repository to receive the dependency coordinate",
     )
     args = parser.parse_args()
 
@@ -91,7 +95,7 @@ def main() -> int:
                 args.artifact_id,
                 args.version,
             )
-            print(f"Installed exact dependency coordinate at {installed_jar}")
+            print(f"Installed dependency coordinate at {installed_jar}")
     return 0
 
 

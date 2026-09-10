@@ -74,16 +74,16 @@ class SnapshotResolverTest(unittest.TestCase):
                 "plugins/misc/hop-geometry-type/hop-geometry-type.jar",
             )
 
-    def test_writes_standalone_exact_version_pom(self) -> None:
+    def test_writes_standalone_version_pom(self) -> None:
         with TemporaryDirectory() as temporary:
             pom = Path(temporary) / "dependency.pom"
-            write_pom(pom, "ch.so.agi", "hop-geometry-type", "0.2.0-20260910.194652-5")
+            write_pom(pom, "ch.so.agi", "hop-geometry-type", "0.2.0-SNAPSHOT")
             contents = pom.read_text(encoding="utf-8")
             self.assertIn("<groupId>ch.so.agi</groupId>", contents)
             self.assertIn("<artifactId>hop-geometry-type</artifactId>", contents)
-            self.assertIn("<version>0.2.0-20260910.194652-5</version>", contents)
+            self.assertIn("<version>0.2.0-SNAPSHOT</version>", contents)
 
-    def test_installs_exact_coordinate_without_embedded_snapshot_version(self) -> None:
+    def test_installs_declared_snapshot_coordinate_without_embedded_version(self) -> None:
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
             source_jar = root / "hop-geometry-type-0.2.0-SNAPSHOT.jar"
@@ -93,7 +93,7 @@ class SnapshotResolverTest(unittest.TestCase):
                 root / "repository",
                 "ch.so.agi",
                 "hop-geometry-type",
-                "0.2.0-20260910.194652-5",
+                "0.2.0-SNAPSHOT",
             )
             self.assertEqual(
                 installed,
@@ -103,8 +103,8 @@ class SnapshotResolverTest(unittest.TestCase):
                 / "so"
                 / "agi"
                 / "hop-geometry-type"
-                / "0.2.0-20260910.194652-5"
-                / "hop-geometry-type-0.2.0-20260910.194652-5.jar",
+                / "0.2.0-SNAPSHOT"
+                / "hop-geometry-type-0.2.0-SNAPSHOT.jar",
             )
             self.assertTrue(installed.with_suffix(".pom").is_file())
 

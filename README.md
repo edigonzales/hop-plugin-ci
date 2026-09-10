@@ -21,7 +21,10 @@ All verification Maven invocations use `-U -B -ntp` and the generated settings
 file. It enables the shared Maven Central, `jars.interlis.ch`, and
 `jars.interlis.guru/snapshots` repositories. Snapshot consumers should use
 `scripts/resolve_maven_snapshot.py` when an exact timestamped ZIP must be
-installed into a later E2E job.
+installed into a later E2E job. When a selected snapshot ZIP supplies a JAR to
+another Maven build, the helper installs that JAR under the unchanged base
+`-SNAPSHOT` coordinate; the timestamped value remains the immutable ZIP
+selection and is not substituted into the caller POM.
 
 The Maven repositories are:
 
