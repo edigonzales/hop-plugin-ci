@@ -135,13 +135,15 @@ jobs:
           set -euo pipefail
           # The values are workflow inputs owned by the caller repository. Splitting them
           # here preserves support for multiple Maven flags without rebuilding the project.
-          options=()
-          extra_args=()
-          goals=()
           read -r -a options <<< "$MAVEN_OPTIONS"
-          read -r -a extra_args <<< "$MAVEN_EXTRA_ARGS"
           read -r -a goals <<< "$MAVEN_GOALS"
-          mvn "${options[@]}" "${extra_args[@]}" "${goals[@]}"
+          maven_args=("${options[@]}")
+          if [[ -n "$MAVEN_EXTRA_ARGS" ]]; then
+            read -r -a extra_args <<< "$MAVEN_EXTRA_ARGS"
+            maven_args+=("${extra_args[@]}")
+          fi
+          maven_args+=("${goals[@]}")
+          mvn "${maven_args[@]}"
 
       - name: Run distribution validation commands
         working-directory: ${{ inputs.maven-working-directory }}
