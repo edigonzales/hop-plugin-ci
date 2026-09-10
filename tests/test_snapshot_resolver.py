@@ -10,7 +10,11 @@ from zipfile import ZipFile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from resolve_maven_snapshot import coordinate_url, resolve_version  # noqa: E402
-from install_maven_jar_from_zip import find_jar, write_pom  # noqa: E402
+from install_maven_jar_from_zip import (  # noqa: E402
+    find_jar,
+    install_in_local_repository,
+    write_pom,
+)
 
 
 class SnapshotResolverTest(unittest.TestCase):
@@ -78,6 +82,31 @@ class SnapshotResolverTest(unittest.TestCase):
             self.assertIn("<groupId>ch.so.agi</groupId>", contents)
             self.assertIn("<artifactId>hop-geometry-type</artifactId>", contents)
             self.assertIn("<version>0.2.0-20260910.194652-5</version>", contents)
+
+    def test_installs_exact_coordinate_without_embedded_snapshot_version(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source_jar = root / "hop-geometry-type-0.2.0-SNAPSHOT.jar"
+            source_jar.write_bytes(b"jar")
+            installed = install_in_local_repository(
+                source_jar,
+                root / "repository",
+                "ch.so.agi",
+                "hop-geometry-type",
+                "0.2.0-20260910.194652-5",
+            )
+            self.assertEqual(
+                installed,
+                root
+                / "repository"
+                / "ch"
+                / "so"
+                / "agi"
+                / "hop-geometry-type"
+                / "0.2.0-20260910.194652-5"
+                / "hop-geometry-type-0.2.0-20260910.194652-5.jar",
+            )
+            self.assertTrue(installed.with_suffix(".pom").is_file())
 
 
 if __name__ == "__main__":
