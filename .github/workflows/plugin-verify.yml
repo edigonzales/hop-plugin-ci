@@ -136,21 +136,19 @@ jobs:
         shell: bash
     env:
       JAVA_VERSIONS: ${{ inputs['java-versions'] }}
-      RUNNER_OS: ${{ inputs['runner-os'] }}
+      REQUESTED_RUNNER_OS: ${{ inputs['runner-os'] }}
       CANONICAL_JAVA: ${{ inputs['canonical-java-version'] }}
       CANONICAL_OS: ${{ inputs['canonical-runner-os'] }}
     steps:
       - name: Check canonical build is part of the requested matrix
         run: |
           set -euo pipefail
-          printf 'Received matrix inputs: JAVA_VERSIONS=%q RUNNER_OS=%q CANONICAL_JAVA=%q CANONICAL_OS=%q\n' \
-            "$JAVA_VERSIONS" "$RUNNER_OS" "$CANONICAL_JAVA" "$CANONICAL_OS"
           python3 - <<'PY'
           import json
           import os
 
           java_versions = json.loads(os.environ["JAVA_VERSIONS"])
-          runner_os = json.loads(os.environ["RUNNER_OS"])
+          runner_os = json.loads(os.environ["REQUESTED_RUNNER_OS"])
           if os.environ["CANONICAL_JAVA"] not in {str(value) for value in java_versions}:
               raise SystemExit("canonical-java-version is not present in java-versions")
           if os.environ["CANONICAL_OS"] not in runner_os:
