@@ -214,18 +214,37 @@ jobs:
           MAVEN_SETTINGS: ${{ steps.maven-settings.outputs.path }}
         run: |
           set -euo pipefail
-          mapfile -t dependency_zips < <(find "$DEPENDENCY_PATH" -type f -name '*.zip' -print | sort)
-          if [[ ${#dependency_zips[@]} -ne 1 ]]; then
-            echo "Expected exactly one dependency ZIP" >&2
-            find "$DEPENDENCY_PATH" -type f -print >&2
+          dependency_zip="$(python3 - "$DEPENDENCY_PATH" <<'PY'
+          from pathlib import Path
+          import sys
+
+          root = Path(sys.argv[1])
+          matches = sorted(root.rglob("*.zip"))
+          if len(matches) != 1:
+              print(f"Expected exactly one dependency ZIP, found {len(matches)}", file=sys.stderr)
+              for path in sorted(root.rglob("*")):
+                  if path.is_file():
+                      print(path, file=sys.stderr)
+              raise SystemExit(1)
+          print(matches[0])
+          PY
+          )"
+          dependency_version="$DEPENDENCY_VERSION"
+          version_file="$DEPENDENCY_PATH/resolved-version.txt"
+          if [[ -f "$version_file" ]]; then
+            dependency_version="$(tr -d '\r\n' < "$version_file")"
+          fi
+          if [[ -z "$dependency_version" ]]; then
+            echo "The exact dependency version is missing" >&2
             exit 1
           fi
+          echo "Installing dependency at resolved version $dependency_version"
           python3 "$GITHUB_WORKSPACE/.ci/hop-plugin-ci/scripts/install_maven_jar_from_zip.py" \
-            --zip "${dependency_zips[0]}" \
+            --zip "$dependency_zip" \
             --jar-glob "$DEPENDENCY_JAR_GLOB" \
             --group-id "$DEPENDENCY_GROUP_ID" \
             --artifact-id "$DEPENDENCY_ARTIFACT_ID" \
-            --version "$DEPENDENCY_VERSION" \
+            --version "$dependency_version" \
             --maven-settings "$MAVEN_SETTINGS"
 
       - name: Build and run Maven verification
