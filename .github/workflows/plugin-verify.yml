@@ -143,6 +143,8 @@ jobs:
       - name: Check canonical build is part of the requested matrix
         run: |
           set -euo pipefail
+          printf 'Received matrix inputs: JAVA_VERSIONS=%q RUNNER_OS=%q CANONICAL_JAVA=%q CANONICAL_OS=%q\n' \
+            "$JAVA_VERSIONS" "$RUNNER_OS" "$CANONICAL_JAVA" "$CANONICAL_OS"
           python3 - <<'PY'
           import json
           import os
