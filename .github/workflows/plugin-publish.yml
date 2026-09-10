@@ -33,6 +33,11 @@ on:
         required: false
         default: main
         type: string
+      extra-maven-artifacts:
+        description: JSON array of already-built Maven artifacts to publish before the ZIP
+        required: false
+        default: '[]'
+        type: string
     secrets:
       MAVEN_USERNAME:
         required: true
@@ -111,6 +116,7 @@ jobs:
           TAG_PREFIX: ${{ inputs.expected-tag-prefix }}
           REPOSITORY_ID: ${{ steps.repository.outputs.server_id }}
           REPOSITORY_URL: ${{ steps.repository.outputs.url }}
+          EXTRA_MAVEN_ARTIFACTS: ${{ inputs.extra-maven-artifacts }}
         run: |
           set -euo pipefail
           if [[ -z "$MAVEN_USERNAME" || -z "$MAVEN_PASSWORD" ]]; then
@@ -124,7 +130,10 @@ jobs:
             find .ci/publish -type f -print >&2
             exit 1
           fi
-          version="$(mvn -q -f "$POM_FILE" -DforceStdout help:evaluate -Dexpression=project.version)"
+          settings="$RUNNER_TEMP/hop-plugin-ci-publish-settings.xml"
+          python3 "$GITHUB_WORKSPACE/.ci/hop-plugin-ci/scripts/write_maven_settings.py" \
+            --output "$settings" --server-id "$REPOSITORY_ID"
+          version="$(mvn -q -s "$settings" -U -B -ntp -f "$POM_FILE" -DforceStdout help:evaluate -Dexpression=project.version)"
           python3 "$GITHUB_WORKSPACE/.ci/hop-plugin-ci/scripts/validate_manifest.py" \
             --manifest "${manifests[0]}" \
             --zip "${zips[0]}" \
@@ -136,7 +145,26 @@ jobs:
             --repository-kind "$KIND" \
             --tag-prefix "$TAG_PREFIX" \
             --git-ref "$GITHUB_REF"
-          mvn -B -ntp org.apache.maven.plugins:maven-deploy-plugin:3.1.4:deploy-file \
+          python3 - "$EXTRA_MAVEN_ARTIFACTS" "$settings" "$REPOSITORY_ID" "$REPOSITORY_URL" <<'PY'
+          import json
+          import subprocess
+          import sys
+
+          artifacts = json.loads(sys.argv[1])
+          settings, repository_id, repository_url = sys.argv[2:]
+          for artifact in artifacts:
+              command = [
+                  "mvn", "-s", settings, "-U", "-B", "-ntp",
+                  "org.apache.maven.plugins:maven-deploy-plugin:3.1.4:deploy-file",
+                  f"-Dfile={artifact['file']}",
+                  f"-DpomFile={artifact['pom-file']}",
+                  f"-Dpackaging={artifact['packaging']}",
+                  f"-DrepositoryId={repository_id}",
+                  f"-Durl={repository_url}",
+              ]
+              subprocess.run(command, check=True)
+          PY
+          mvn -s "$settings" -U -B -ntp org.apache.maven.plugins:maven-deploy-plugin:3.1.4:deploy-file \
             -Dfile="${zips[0]}" \
             -DpomFile="$POM_FILE" \
             -Dpackaging=zip \

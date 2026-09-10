@@ -4,12 +4,22 @@ on:
   workflow_call:
     inputs:
       java-versions:
-        description: JSON array of Java versions, for example ["17"] or ["21", "25"]
+        description: JSON array of Java versions, for example ["21", "25"]
         required: true
         type: string
       runner-os:
         description: JSON array of GitHub runner labels
         required: true
+        type: string
+      canonical-runner-os:
+        description: Runner that creates the one publishable ZIP
+        required: false
+        default: ubuntu-latest
+        type: string
+      canonical-java-version:
+        description: Java version that creates the one publishable ZIP
+        required: false
+        default: "21"
         type: string
       maven-working-directory:
         description: Directory containing the Maven project
@@ -30,6 +40,11 @@ on:
         description: Maven goals to run for the verification build
         required: false
         default: clean verify
+        type: string
+      compatibility-goals:
+        description: Maven goals for non-canonical Java/OS compatibility jobs
+        required: false
+        default: test
         type: string
       pom-file:
         description: POM used to resolve the published plugin version
@@ -53,6 +68,31 @@ on:
         description: Destination for the optional dependency artifact
         required: false
         default: .ci/dependencies
+        type: string
+      dependency-install:
+        description: Install one JAR extracted from the dependency ZIP before Maven
+        required: false
+        default: false
+        type: boolean
+      dependency-group-id:
+        description: Group ID of the JAR extracted from the dependency ZIP
+        required: false
+        default: ''
+        type: string
+      dependency-artifact-id:
+        description: Artifact ID of the JAR extracted from the dependency ZIP
+        required: false
+        default: ''
+        type: string
+      dependency-version:
+        description: Exact version to use for the locally installed dependency JAR
+        required: false
+        default: ''
+        type: string
+      dependency-jar-glob:
+        description: ZIP path glob for the dependency JAR to install
+        required: false
+        default: plugins/misc/hop-geometry-type/*.jar
         type: string
       artifact-name-prefix:
         description: Stable prefix used for uploaded verification artifacts
@@ -80,16 +120,44 @@ on:
         default: main
         type: string
     outputs:
-      artifact-name-prefix:
-        description: Prefix used to name the matrix artifacts
-        value: ${{ inputs.artifact-name-prefix }}
+      canonical-artifact-name:
+        description: Stable artifact containing the only publishable ZIP and manifest
+        value: ${{ inputs.artifact-name-prefix }}-canonical
 
 permissions:
   contents: read
 
 jobs:
+  validate-inputs:
+    name: Validate verification contract
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    env:
+      JAVA_VERSIONS: ${{ inputs.java-versions }}
+      RUNNER_OS: ${{ inputs.runner-os }}
+      CANONICAL_JAVA: ${{ inputs.canonical-java-version }}
+      CANONICAL_OS: ${{ inputs.canonical-runner-os }}
+    steps:
+      - name: Check canonical build is part of the requested matrix
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+
+          java_versions = json.loads(os.environ["JAVA_VERSIONS"])
+          runner_os = json.loads(os.environ["RUNNER_OS"])
+          if os.environ["CANONICAL_JAVA"] not in {str(value) for value in java_versions}:
+              raise SystemExit("canonical-java-version is not present in java-versions")
+          if os.environ["CANONICAL_OS"] not in runner_os:
+              raise SystemExit("canonical-runner-os is not present in runner-os")
+          PY
+
   build:
     name: Verify (${{ matrix.os }}, Java ${{ matrix.java }})
+    needs: validate-inputs
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -118,6 +186,15 @@ jobs:
           java-version: ${{ matrix.java }}
           cache: maven
 
+      - name: Configure common Maven repositories
+        id: maven-settings
+        run: |
+          set -euo pipefail
+          settings="$RUNNER_TEMP/hop-plugin-ci-settings.xml"
+          python3 "$GITHUB_WORKSPACE/.ci/hop-plugin-ci/scripts/write_maven_settings.py" \
+            --output "$settings"
+          echo "path=$settings" >> "$GITHUB_OUTPUT"
+
       - name: Download dependency artifact
         if: inputs.dependency-artifact-name != ''
         uses: actions/download-artifact@v4
@@ -125,27 +202,68 @@ jobs:
           name: ${{ inputs.dependency-artifact-name }}
           path: ${{ inputs.dependency-artifact-path }}
 
+      - name: Install dependency JAR from verified ZIP
+        if: inputs.dependency-install
+        working-directory: ${{ inputs.maven-working-directory }}
+        env:
+          DEPENDENCY_PATH: ${{ inputs.dependency-artifact-path }}
+          DEPENDENCY_GROUP_ID: ${{ inputs.dependency-group-id }}
+          DEPENDENCY_ARTIFACT_ID: ${{ inputs.dependency-artifact-id }}
+          DEPENDENCY_VERSION: ${{ inputs.dependency-version }}
+          DEPENDENCY_JAR_GLOB: ${{ inputs.dependency-jar-glob }}
+          MAVEN_SETTINGS: ${{ steps.maven-settings.outputs.path }}
+        run: |
+          set -euo pipefail
+          mapfile -t dependency_zips < <(find "$DEPENDENCY_PATH" -type f -name '*.zip' -print | sort)
+          if [[ ${#dependency_zips[@]} -ne 1 ]]; then
+            echo "Expected exactly one dependency ZIP" >&2
+            find "$DEPENDENCY_PATH" -type f -print >&2
+            exit 1
+          fi
+          python3 "$GITHUB_WORKSPACE/.ci/hop-plugin-ci/scripts/install_maven_jar_from_zip.py" \
+            --zip "${dependency_zips[0]}" \
+            --jar-glob "$DEPENDENCY_JAR_GLOB" \
+            --group-id "$DEPENDENCY_GROUP_ID" \
+            --artifact-id "$DEPENDENCY_ARTIFACT_ID" \
+            --version "$DEPENDENCY_VERSION" \
+            --maven-settings "$MAVEN_SETTINGS"
+
       - name: Build and run Maven verification
         working-directory: ${{ inputs.maven-working-directory }}
         env:
           MAVEN_OPTIONS: ${{ inputs.maven-options }}
           MAVEN_EXTRA_ARGS: ${{ inputs.maven-extra-args }}
           MAVEN_GOALS: ${{ inputs.maven-goals }}
+          COMPATIBILITY_GOALS: ${{ inputs.compatibility-goals }}
+          MATRIX_OS: ${{ matrix.os }}
+          MATRIX_JAVA: ${{ matrix.java }}
+          CANONICAL_OS: ${{ inputs.canonical-runner-os }}
+          CANONICAL_JAVA: ${{ inputs.canonical-java-version }}
+          MAVEN_SETTINGS: ${{ steps.maven-settings.outputs.path }}
         run: |
           set -euo pipefail
           # The values are workflow inputs owned by the caller repository. Splitting them
           # here preserves support for multiple Maven flags without rebuilding the project.
           read -r -a options <<< "$MAVEN_OPTIONS"
-          read -r -a goals <<< "$MAVEN_GOALS"
+          if [[ "$MATRIX_OS" == "$CANONICAL_OS" && "$MATRIX_JAVA" == "$CANONICAL_JAVA" ]]; then
+            selected_goals="$MAVEN_GOALS"
+            echo "Running canonical Maven build: $selected_goals"
+          else
+            selected_goals="$COMPATIBILITY_GOALS"
+            echo "Running compatibility Maven build: $selected_goals"
+          fi
+          read -r -a goals <<< "$selected_goals"
           maven_args=("${options[@]}")
           if [[ -n "$MAVEN_EXTRA_ARGS" ]]; then
             read -r -a extra_args <<< "$MAVEN_EXTRA_ARGS"
             maven_args+=("${extra_args[@]}")
           fi
           maven_args+=("${goals[@]}")
+          maven_args+=("-s" "$MAVEN_SETTINGS")
           mvn "${maven_args[@]}"
 
       - name: Run distribution validation commands
+        if: matrix.os == inputs.canonical-runner-os && matrix.java == inputs.canonical-java-version
         working-directory: ${{ inputs.maven-working-directory }}
         env:
           VALIDATION_COMMANDS: ${{ inputs.validation-commands }}
@@ -154,6 +272,7 @@ jobs:
             --commands-json "$VALIDATION_COMMANDS"
 
       - name: Create verified ZIP manifest
+        if: matrix.os == inputs.canonical-runner-os && matrix.java == inputs.canonical-java-version
         working-directory: ${{ inputs.maven-working-directory }}
         env:
           REPOSITORY: ${{ github.repository }}
@@ -167,12 +286,13 @@ jobs:
           ARTIFACT_PREFIX: ${{ inputs.artifact-name-prefix }}
           MATRIX_OS: ${{ matrix.os }}
           MATRIX_JAVA: ${{ matrix.java }}
+          MAVEN_SETTINGS: ${{ steps.maven-settings.outputs.path }}
         run: |
           set -euo pipefail
           mkdir -p "$GITHUB_WORKSPACE/.ci/verified"
-          version="$(mvn -q -f "$POM_FILE" -DforceStdout help:evaluate -Dexpression=project.version)"
+          version="$(mvn -q -s "$MAVEN_SETTINGS" -f "$POM_FILE" -DforceStdout help:evaluate -Dexpression=project.version)"
           safe_os="${MATRIX_OS//[^A-Za-z0-9._-]/-}"
-          artifact_name="${ARTIFACT_PREFIX}-${safe_os}-jdk${MATRIX_JAVA}"
+          artifact_name="${ARTIFACT_PREFIX}-canonical"
           python3 "$GITHUB_WORKSPACE/.ci/hop-plugin-ci/scripts/build_manifest.py" \
             --zip-glob "$ZIP_GLOB" \
             --version "$version" \
@@ -204,9 +324,10 @@ jobs:
           echo "ARTIFACT_NAME=$artifact_name" >> "$GITHUB_ENV"
 
       - name: Upload verified plugin ZIP and manifest
+        if: matrix.os == inputs.canonical-runner-os && matrix.java == inputs.canonical-java-version
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ inputs.artifact-name-prefix }}-${{ matrix.os }}-jdk${{ matrix.java }}
+          name: ${{ inputs.artifact-name-prefix }}-canonical
           if-no-files-found: error
           path: ${{ github.workspace }}/.ci/verified/upload/*
 

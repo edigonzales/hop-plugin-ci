@@ -1,0 +1,74 @@
+from __future__ import annotations
+
+from pathlib import Path
+import sys
+import unittest
+from io import BytesIO
+from zipfile import ZipFile
+
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+from resolve_maven_snapshot import coordinate_url, resolve_version  # noqa: E402
+from install_maven_jar_from_zip import find_jar  # noqa: E402
+
+
+class SnapshotResolverTest(unittest.TestCase):
+    def metadata(self, values: str) -> bytes:
+        return f"""<?xml version=\"1.0\" encoding=\"UTF-8\"?>
+<metadata>
+  <groupId>ch.so.agi</groupId>
+  <artifactId>hop-demo-plugin</artifactId>
+  <version>1.2.3-SNAPSHOT</version>
+  <versioning><snapshotVersions>{values}</snapshotVersions></versioning>
+</metadata>""".encode()
+
+    def test_resolves_one_unclassified_zip(self) -> None:
+        metadata = self.metadata(
+            "<snapshotVersion><extension>zip</extension>"
+            "<value>1.2.3-20260910.120000-4</value></snapshotVersion>"
+        )
+        self.assertEqual(
+            resolve_version(metadata, "ch.so.agi", "hop-demo-plugin", "1.2.3-SNAPSHOT", "zip"),
+            "1.2.3-20260910.120000-4",
+        )
+
+    def test_rejects_multiple_unclassified_zips(self) -> None:
+        metadata = self.metadata(
+            "<snapshotVersion><extension>zip</extension><value>a</value></snapshotVersion>"
+            "<snapshotVersion><extension>zip</extension><value>b</value></snapshotVersion>"
+        )
+        with self.assertRaises(ValueError):
+            resolve_version(metadata, "ch.so.agi", "hop-demo-plugin", "1.2.3-SNAPSHOT", "zip")
+
+    def test_rejects_classified_zip(self) -> None:
+        metadata = self.metadata(
+            "<snapshotVersion><extension>zip</extension><classifier>sources</classifier>"
+            "<value>1.2.3-20260910.120000-4</value></snapshotVersion>"
+        )
+        with self.assertRaises(ValueError):
+            resolve_version(metadata, "ch.so.agi", "hop-demo-plugin", "1.2.3-SNAPSHOT", "zip")
+
+    def test_builds_maven_coordinate_url(self) -> None:
+        self.assertEqual(
+            coordinate_url(
+                "https://jars.interlis.guru/snapshots",
+                "ch.so.agi",
+                "hop-geometry-type",
+                "0.2.0-SNAPSHOT",
+            ),
+            "https://jars.interlis.guru/snapshots/ch/so/agi/hop-geometry-type/0.2.0-SNAPSHOT",
+        )
+
+    def test_requires_one_runtime_jar(self) -> None:
+        buffer = BytesIO()
+        with ZipFile(buffer, "w") as archive:
+            archive.writestr("plugins/misc/hop-geometry-type/hop-geometry-type.jar", b"jar")
+        with ZipFile(BytesIO(buffer.getvalue())) as archive:
+            self.assertEqual(
+                find_jar(archive, "plugins/misc/hop-geometry-type/*.jar"),
+                "plugins/misc/hop-geometry-type/hop-geometry-type.jar",
+            )
+
+
+if __name__ == "__main__":
+    unittest.main()
