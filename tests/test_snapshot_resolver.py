@@ -4,12 +4,13 @@ from pathlib import Path
 import sys
 import unittest
 from io import BytesIO
+from tempfile import TemporaryDirectory
 from zipfile import ZipFile
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from resolve_maven_snapshot import coordinate_url, resolve_version  # noqa: E402
-from install_maven_jar_from_zip import find_jar  # noqa: E402
+from install_maven_jar_from_zip import find_jar, write_pom  # noqa: E402
 
 
 class SnapshotResolverTest(unittest.TestCase):
@@ -68,6 +69,15 @@ class SnapshotResolverTest(unittest.TestCase):
                 find_jar(archive, "plugins/misc/hop-geometry-type/*.jar"),
                 "plugins/misc/hop-geometry-type/hop-geometry-type.jar",
             )
+
+    def test_writes_standalone_exact_version_pom(self) -> None:
+        with TemporaryDirectory() as temporary:
+            pom = Path(temporary) / "dependency.pom"
+            write_pom(pom, "ch.so.agi", "hop-geometry-type", "0.2.0-20260910.194652-5")
+            contents = pom.read_text(encoding="utf-8")
+            self.assertIn("<groupId>ch.so.agi</groupId>", contents)
+            self.assertIn("<artifactId>hop-geometry-type</artifactId>", contents)
+            self.assertIn("<version>0.2.0-20260910.194652-5</version>", contents)
 
 
 if __name__ == "__main__":
