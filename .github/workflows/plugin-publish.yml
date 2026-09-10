@@ -1,0 +1,138 @@
+name: Publish verified Apache Hop plugin
+
+on:
+  workflow_call:
+    inputs:
+      repository-kind:
+        description: Either snapshot or release
+        required: true
+        type: string
+      verified-artifact-name:
+        description: Exact artifact name emitted by plugin-verify
+        required: true
+        type: string
+      pom-file:
+        description: Assembly POM used as Maven metadata
+        required: true
+        type: string
+      artifact-id:
+        description: Expected Maven artifactId
+        required: true
+        type: string
+      plugin-root:
+        description: Required installation root inside the ZIP
+        required: true
+        type: string
+      expected-tag-prefix:
+        description: Tag prefix used for release version validation
+        required: false
+        default: v
+        type: string
+      ci-ref:
+        description: Immutable branch, tag, or commit of hop-plugin-ci containing the helpers
+        required: false
+        default: main
+        type: string
+    secrets:
+      MAVEN_USERNAME:
+        required: true
+      MAVEN_PASSWORD:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish verified ${{ inputs.repository-kind }}
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out caller repository
+        uses: actions/checkout@v4
+
+      - name: Check out CI helper scripts
+        uses: actions/checkout@v4
+        with:
+          repository: edigonzales/hop-plugin-ci
+          ref: ${{ inputs.ci-ref }}
+          path: .ci/hop-plugin-ci
+          persist-credentials: false
+
+      - name: Download exact verified artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.verified-artifact-name }}
+          path: .ci/publish
+
+      - name: Resolve Maven repository
+        id: repository
+        env:
+          KIND: ${{ inputs.repository-kind }}
+        run: |
+          set -euo pipefail
+          case "$KIND" in
+            snapshot)
+              echo 'server_id=sogeo-snapshots' >> "$GITHUB_OUTPUT"
+              echo 'url=https://jars.interlis.guru/snapshots/' >> "$GITHUB_OUTPUT"
+              ;;
+            release)
+              echo 'server_id=sogeo-releases' >> "$GITHUB_OUTPUT"
+              echo 'url=https://jars.interlis.guru/releases/' >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "Unsupported repository kind: $KIND" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Set up Java and Maven credentials
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          server-id: ${{ steps.repository.outputs.server_id }}
+          server-username: MAVEN_USERNAME
+          server-password: MAVEN_PASSWORD
+        env:
+          MAVEN_USERNAME: ${{ secrets.MAVEN_USERNAME }}
+          MAVEN_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}
+
+      - name: Validate and publish exact ZIP
+        env:
+          REPOSITORY: ${{ github.repository }}
+          COMMIT_SHA: ${{ github.sha }}
+          KIND: ${{ inputs.repository-kind }}
+          POM_FILE: ${{ inputs.pom-file }}
+          ARTIFACT_ID: ${{ inputs.artifact-id }}
+          PLUGIN_ROOT: ${{ inputs.plugin-root }}
+          TAG_PREFIX: ${{ inputs.expected-tag-prefix }}
+          REPOSITORY_ID: ${{ steps.repository.outputs.server_id }}
+          REPOSITORY_URL: ${{ steps.repository.outputs.url }}
+        run: |
+          set -euo pipefail
+          mapfile -t zips < <(find .ci/publish -type f -name '*.zip' -print | sort)
+          mapfile -t manifests < <(find .ci/publish -type f -name '*.manifest.json' -print | sort)
+          if [[ ${#zips[@]} -ne 1 || ${#manifests[@]} -ne 1 ]]; then
+            echo "Expected exactly one ZIP and one manifest" >&2
+            find .ci/publish -type f -print >&2
+            exit 1
+          fi
+          version="$(mvn -q -f "$POM_FILE" -DforceStdout help:evaluate -Dexpression=project.version)"
+          python3 "$GITHUB_WORKSPACE/.ci/hop-plugin-ci/scripts/validate_manifest.py" \
+            --manifest "${manifests[0]}" \
+            --zip "${zips[0]}" \
+            --repository "$REPOSITORY" \
+            --commit-sha "$COMMIT_SHA" \
+            --artifact-id "$ARTIFACT_ID" \
+            --version "$version" \
+            --plugin-root "$PLUGIN_ROOT" \
+            --repository-kind "$KIND" \
+            --tag-prefix "$TAG_PREFIX" \
+            --git-ref "$GITHUB_REF"
+          mvn -B -ntp org.apache.maven.plugins:maven-deploy-plugin:3.1.4:deploy-file \
+            -Dfile="${zips[0]}" \
+            -DpomFile="$POM_FILE" \
+            -Dpackaging=zip \
+            -DrepositoryId="$REPOSITORY_ID" \
+            -Durl="$REPOSITORY_URL"
