@@ -238,6 +238,14 @@ jobs:
             echo "The exact dependency version is missing" >&2
             exit 1
           fi
+          maven_local_repository="$(python3 - <<'PY'
+          from pathlib import Path
+          import os
+
+          maven_user_home = Path(os.environ.get("MAVEN_USER_HOME", Path.home() / ".m2"))
+          print((maven_user_home / "repository").as_posix())
+          PY
+          )"
           echo "Installing dependency at resolved version $dependency_version"
           python3 "$GITHUB_WORKSPACE/.ci/hop-plugin-ci/scripts/install_maven_jar_from_zip.py" \
             --zip "$dependency_zip" \
@@ -245,7 +253,8 @@ jobs:
             --group-id "$DEPENDENCY_GROUP_ID" \
             --artifact-id "$DEPENDENCY_ARTIFACT_ID" \
             --version "$dependency_version" \
-            --maven-settings "$MAVEN_SETTINGS"
+            --maven-settings "$MAVEN_SETTINGS" \
+            --local-repository "$maven_local_repository"
 
       - name: Build and run Maven verification
         working-directory: ${{ inputs['maven-working-directory'] }}
@@ -273,6 +282,15 @@ jobs:
           fi
           read -r -a goals <<< "$selected_goals"
           maven_args=("${options[@]}")
+          maven_local_repository="$(python3 - <<'PY'
+          from pathlib import Path
+          import os
+
+          maven_user_home = Path(os.environ.get("MAVEN_USER_HOME", Path.home() / ".m2"))
+          print((maven_user_home / "repository").as_posix())
+          PY
+          )"
+          maven_args+=("-Dmaven.repo.local=$maven_local_repository")
           if [[ -n "$MAVEN_EXTRA_ARGS" ]]; then
             read -r -a extra_args <<< "$MAVEN_EXTRA_ARGS"
             maven_args+=("${extra_args[@]}")
