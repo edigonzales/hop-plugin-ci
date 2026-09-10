@@ -329,7 +329,6 @@ jobs:
           set -euo pipefail
           mkdir -p "$GITHUB_WORKSPACE/.ci/verified"
           version="$(mvn -q -s "$MAVEN_SETTINGS" -f "$POM_FILE" -DforceStdout help:evaluate -Dexpression=project.version)"
-          safe_os="${MATRIX_OS//[^A-Za-z0-9._-]/-}"
           artifact_name="${ARTIFACT_PREFIX}-canonical"
           python3 "$GITHUB_WORKSPACE/.ci/hop-plugin-ci/scripts/build_manifest.py" \
             --zip-glob "$ZIP_GLOB" \
