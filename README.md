@@ -1,71 +1,20 @@
 # hop-plugin-ci
 
-Reusable GitHub Actions workflows for Apache Hop plugins.
+Reusable GitHub Actions workflows for Apache Hop plugins and Maven libraries.
 
-## Contract
+Read the [CI and test contract](docs/ci-contract.md) for shared build rules,
+canonical artifacts, test responsibilities, Maven resolution and publication.
+It also contains local setup instructions and an `AGENTS.md` onboarding template.
+Caller repositories document their concrete test commands in their root
+`AGENTS.md`.
 
-The caller repository keeps plugin-specific preparation and installed-Hop E2E
-tests. This repository provides the common build contract:
+## Workflows
 
-1. `plugin-verify.yml` runs the requested Java/OS matrix, validates either the
-   legacy single packaged ZIP or a declared set of ZIPs, and uploads the
-   canonical bundle with a SHA-256 manifest. The Ubuntu/Java 21 matrix cell is
-   the canonical build; compatibility cells run tests without creating
-   competing ZIPs.
-2. A caller-specific E2E job consumes that exact artifact.
-3. `plugin-publish.yml` downloads the same artifact, validates every manifest
-   entry and version/tag relationship, and publishes the ZIPs without rebuilding.
-   Callers may additionally pass already-built Maven JAR/POM files when the
-   plugin has a shared runtime library that downstream plugins compile against.
-   The verify workflow can also include explicitly declared files such as a
-   parent POM in the canonical artifact, so the publish workflow can deploy
-   the complete Maven descriptor chain.
+- Plugins: [verify](.github/workflows/plugin-verify.yml) and
+  [publish](.github/workflows/plugin-publish.yml).
+- Maven libraries: [verify](.github/workflows/maven-library-verify.yml) and
+  [publish](.github/workflows/maven-library-publish.yml).
+- This repository: [self-test](.github/workflows/self-test.yml).
 
-All verification Maven invocations use `-U -B -ntp` and the generated settings
-file. It enables the shared Maven Central, `jars.interlis.ch`, and
-`jars.interlis.guru/snapshots` repositories. Snapshot consumers should declare
-the normal base `-SNAPSHOT` coordinate in their POM. Maven then resolves the
-current snapshot through repository metadata. For non-Maven ZIP installation,
-`scripts/download_maven_artifact.py` uses Maven's normal resolution and copies
-the current artifact to a caller-provided path without exposing or pinning the
-timestamped repository filename.
-
-`scripts/resolve_maven_snapshot.py` remains available for an explicitly
-reproducible lock-file or distribution workflow. It is not the default
-dependency path for the pilot plugin builds.
-
-Multi-ZIP plugin callers pass `zip-descriptors` as a JSON array with
-`artifactId`, `zipGlob` and `pluginRoot`. The workflow creates a
-coordinate-identical publication POM for every ZIP and records both ZIP and POM
-hashes in the schema-version 2 manifest. Existing callers that omit
-`zip-descriptors` continue to use the schema-version 1 single-ZIP contract.
-
-## Maven library contract
-
-`maven-library-verify.yml` and `maven-library-publish.yml` are the parallel
-contract for Maven libraries that do not produce an installable Hop ZIP. The
-caller declares a JSON artifact list containing the main file, POM, packaging,
-and optional classifier files. The canonical matrix cell collects the exact
-Parent-POM/JAR/classifier files into a SHA-256 manifest. The publish workflow
-validates and deploys that bundle with `deploy-file`; it never rebuilds it.
-
-Library snapshot consumers continue to declare the base `-SNAPSHOT` version.
-Maven resolves the current timestamp through normal repository metadata.
-
-The Maven repositories are:
-
-- snapshots: `https://jars.interlis.guru/snapshots/`
-- releases: `https://jars.interlis.guru/releases/`
-
-The publish workflow expects the caller to pass `MAVEN_USERNAME` and
-`MAVEN_PASSWORD` as protected secrets. Pull requests must only call the verify
-workflow; publication is reserved for main pushes and version tags.
-
-For multi-ZIP bundles, publication deploys every ZIP with its matching generated
-`packaging=zip` POM and then resolves each base Maven coordinate with a fresh local
-repository. The downloaded bytes must match the verified bundle exactly.
-
-See `.github/workflows/plugin-verify.yml` and
-`.github/workflows/plugin-publish.yml` for the plugin `workflow_call` interface,
-and `.github/workflows/maven-library-verify.yml` plus
-`.github/workflows/maven-library-publish.yml` for the Maven library interface.
+The workflow files define the exact callable interfaces. Consult the revision
+used by the caller when working with pinned workflows.
