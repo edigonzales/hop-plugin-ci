@@ -59,6 +59,11 @@ on:
         required: false
         default: "[]"
         type: string
+      additional-verified-files:
+        description: JSON array of files copied into the canonical verification artifact
+        required: false
+        default: "[]"
+        type: string
       dependency-artifact-name:
         description: Optional artifact from an earlier job in this workflow run
         required: false
@@ -325,6 +330,7 @@ jobs:
           MATRIX_OS: ${{ matrix.os }}
           MATRIX_JAVA: ${{ matrix.java }}
           MAVEN_SETTINGS: ${{ steps.maven-settings.outputs.path }}
+          ADDITIONAL_VERIFIED_FILES: ${{ inputs['additional-verified-files'] }}
         run: |
           set -euo pipefail
           mkdir -p "$GITHUB_WORKSPACE/.ci/verified"
@@ -358,6 +364,20 @@ jobs:
           cp "$zip_path" "$upload_dir/$(basename "$zip_path")"
           cp "$GITHUB_WORKSPACE/.ci/verified/${artifact_name}.manifest.json" \
             "$upload_dir/${artifact_name}.manifest.json"
+          python3 - "$ADDITIONAL_VERIFIED_FILES" "$upload_dir" <<'PY'
+          import json
+          from pathlib import Path
+          import shutil
+          import sys
+
+          files = json.loads(sys.argv[1])
+          upload_dir = Path(sys.argv[2])
+          for value in files:
+              source = Path(value)
+              if not source.is_file():
+                  raise SystemExit(f"Additional verified file does not exist: {source}")
+              shutil.copy2(source, upload_dir / source.name)
+          PY
           echo "ARTIFACT_NAME=$artifact_name" >> "$GITHUB_ENV"
 
       - name: Upload verified plugin ZIP and manifest

@@ -16,6 +16,9 @@ tests. This repository provides the common build contract:
    version/tag relationship, and publishes the ZIP without rebuilding.
    Callers may additionally pass already-built Maven JAR/POM files when the
    plugin has a shared runtime library that downstream plugins compile against.
+   The verify workflow can also include explicitly declared files such as a
+   parent POM in the canonical artifact, so the publish workflow can deploy
+   the complete Maven descriptor chain.
 
 All verification Maven invocations use `-U -B -ntp` and the generated settings
 file. It enables the shared Maven Central, `jars.interlis.ch`, and
