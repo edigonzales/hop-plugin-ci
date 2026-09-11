@@ -19,12 +19,16 @@ tests. This repository provides the common build contract:
 
 All verification Maven invocations use `-U -B -ntp` and the generated settings
 file. It enables the shared Maven Central, `jars.interlis.ch`, and
-`jars.interlis.guru/snapshots` repositories. Snapshot consumers should use
-`scripts/resolve_maven_snapshot.py` when an exact timestamped ZIP must be
-installed into a later E2E job. When a selected snapshot ZIP supplies a JAR to
-another Maven build, the helper installs that JAR under the unchanged base
-`-SNAPSHOT` coordinate; the timestamped value remains the immutable ZIP
-selection and is not substituted into the caller POM.
+`jars.interlis.guru/snapshots` repositories. Snapshot consumers should declare
+the normal base `-SNAPSHOT` coordinate in their POM. Maven then resolves the
+current snapshot through repository metadata. For non-Maven ZIP installation,
+`scripts/download_maven_artifact.py` uses Maven's normal resolution and copies
+the current artifact to a caller-provided path without exposing or pinning the
+timestamped repository filename.
+
+`scripts/resolve_maven_snapshot.py` remains available for an explicitly
+reproducible lock-file or distribution workflow. It is not the default
+dependency path for the pilot plugin builds.
 
 The Maven repositories are:
 
