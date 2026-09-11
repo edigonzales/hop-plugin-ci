@@ -7,13 +7,14 @@ Reusable GitHub Actions workflows for Apache Hop plugins.
 The caller repository keeps plugin-specific preparation and installed-Hop E2E
 tests. This repository provides the common build contract:
 
-1. `plugin-verify.yml` runs the requested Java/OS matrix, validates exactly one
-   packaged ZIP, and uploads it with a SHA-256 manifest. The Ubuntu/Java 21
-   matrix cell is the canonical build; compatibility cells run tests without
-   creating competing ZIPs.
+1. `plugin-verify.yml` runs the requested Java/OS matrix, validates either the
+   legacy single packaged ZIP or a declared set of ZIPs, and uploads the
+   canonical bundle with a SHA-256 manifest. The Ubuntu/Java 21 matrix cell is
+   the canonical build; compatibility cells run tests without creating
+   competing ZIPs.
 2. A caller-specific E2E job consumes that exact artifact.
-3. `plugin-publish.yml` downloads the same artifact, validates the manifest and
-   version/tag relationship, and publishes the ZIP without rebuilding.
+3. `plugin-publish.yml` downloads the same artifact, validates every manifest
+   entry and version/tag relationship, and publishes the ZIPs without rebuilding.
    Callers may additionally pass already-built Maven JAR/POM files when the
    plugin has a shared runtime library that downstream plugins compile against.
    The verify workflow can also include explicitly declared files such as a
@@ -32,6 +33,12 @@ timestamped repository filename.
 `scripts/resolve_maven_snapshot.py` remains available for an explicitly
 reproducible lock-file or distribution workflow. It is not the default
 dependency path for the pilot plugin builds.
+
+Multi-ZIP plugin callers pass `zip-descriptors` as a JSON array with
+`artifactId`, `zipGlob` and `pluginRoot`. The workflow creates a
+coordinate-identical publication POM for every ZIP and records both ZIP and POM
+hashes in the schema-version 2 manifest. Existing callers that omit
+`zip-descriptors` continue to use the schema-version 1 single-ZIP contract.
 
 ## Maven library contract
 
@@ -53,6 +60,10 @@ The Maven repositories are:
 The publish workflow expects the caller to pass `MAVEN_USERNAME` and
 `MAVEN_PASSWORD` as protected secrets. Pull requests must only call the verify
 workflow; publication is reserved for main pushes and version tags.
+
+For multi-ZIP bundles, publication deploys every ZIP with its matching generated
+`packaging=zip` POM and then resolves each base Maven coordinate with a fresh local
+repository. The downloaded bytes must match the verified bundle exactly.
 
 See `.github/workflows/plugin-verify.yml` and
 `.github/workflows/plugin-publish.yml` for the plugin `workflow_call` interface,

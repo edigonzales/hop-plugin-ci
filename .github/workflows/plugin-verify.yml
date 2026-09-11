@@ -12,12 +12,12 @@ on:
         required: true
         type: string
       canonical-runner-os:
-        description: Runner that creates the one publishable ZIP
+        description: Runner that creates the canonical publishable artifact bundle
         required: false
         default: ubuntu-latest
         type: string
       canonical-java-version:
-        description: Java version that creates the one publishable ZIP
+        description: Java version that creates the canonical publishable artifact bundle
         required: false
         default: "21"
         type: string
@@ -44,15 +44,21 @@ on:
       compatibility-goals:
         description: Maven goals for non-canonical Java/OS compatibility jobs
         required: false
-        default: test
+        default: clean test
         type: string
       pom-file:
         description: POM used to resolve the published plugin version
         required: true
         type: string
+      zip-descriptors:
+        description: Optional JSON array describing multiple canonical ZIP artifacts
+        required: false
+        default: '[]'
+        type: string
       zip-glob:
-        description: Glob relative to the Maven working directory; it must match exactly one ZIP
-        required: true
+        description: Legacy single-ZIP glob, used when zip-descriptors is empty
+        required: false
+        default: ''
         type: string
       validation-commands:
         description: JSON array of shell commands run after the Maven build
@@ -108,16 +114,18 @@ on:
         required: true
         type: string
       artifact-id:
-        description: Maven artifactId recorded in the manifest
-        required: true
+        description: Legacy single-ZIP Maven artifactId
+        required: false
+        default: ''
         type: string
       hop-version:
         description: Apache Hop version used by the plugin
         required: true
         type: string
       plugin-root:
-        description: Required installation root inside the plugin ZIP
-        required: true
+        description: Legacy single-ZIP installation root
+        required: false
+        default: ''
         type: string
       ci-ref:
         description: Immutable branch, tag, or commit of hop-plugin-ci containing the helpers
@@ -126,7 +134,7 @@ on:
         type: string
     outputs:
       canonical-artifact-name:
-        description: Stable artifact containing the only publishable ZIP and manifest
+        description: Stable artifact containing the canonical ZIP bundle and manifest
         value: ${{ inputs['artifact-name-prefix'] }}-canonical
 
 permissions:
@@ -144,6 +152,10 @@ jobs:
       REQUESTED_RUNNER_OS: ${{ inputs['runner-os'] }}
       CANONICAL_JAVA: ${{ inputs['canonical-java-version'] }}
       CANONICAL_OS: ${{ inputs['canonical-runner-os'] }}
+      ZIP_DESCRIPTORS: ${{ inputs['zip-descriptors'] }}
+      LEGACY_ZIP_GLOB: ${{ inputs['zip-glob'] }}
+      LEGACY_ARTIFACT_ID: ${{ inputs['artifact-id'] }}
+      LEGACY_PLUGIN_ROOT: ${{ inputs['plugin-root'] }}
     steps:
       - name: Check canonical build is part of the requested matrix
         run: |
@@ -158,6 +170,24 @@ jobs:
               raise SystemExit("canonical-java-version is not present in java-versions")
           if os.environ["CANONICAL_OS"] not in runner_os:
               raise SystemExit("canonical-runner-os is not present in runner-os")
+
+          descriptors = json.loads(os.environ["ZIP_DESCRIPTORS"])
+          if not isinstance(descriptors, list):
+              raise SystemExit("zip-descriptors must be a JSON array")
+          if descriptors:
+              required = {"artifactId", "zipGlob", "pluginRoot"}
+              seen = set()
+              for descriptor in descriptors:
+                  if not isinstance(descriptor, dict) or not required <= descriptor.keys():
+                      raise SystemExit("Every ZIP descriptor needs artifactId, zipGlob and pluginRoot")
+                  artifact_id = descriptor["artifactId"]
+                  if not isinstance(artifact_id, str) or not artifact_id or artifact_id in seen:
+                      raise SystemExit(f"Invalid or duplicate ZIP artifactId: {artifact_id!r}")
+                  seen.add(artifact_id)
+          else:
+              for name in ("LEGACY_ZIP_GLOB", "LEGACY_ARTIFACT_ID", "LEGACY_PLUGIN_ROOT"):
+                  if not os.environ[name]:
+                      raise SystemExit(f"{name} is required when zip-descriptors is empty")
           PY
 
   build:
@@ -303,7 +333,12 @@ jobs:
           fi
           maven_args+=("${goals[@]}")
           maven_args+=("-s" "$MAVEN_SETTINGS")
-          mvn "${maven_args[@]}"
+          echo "MAVEN_REPO_LOCAL=$maven_local_repository" >> "$GITHUB_ENV"
+          if [[ "$RUNNER_OS" == "Linux" ]] && command -v xvfb-run >/dev/null 2>&1; then
+            xvfb-run -a mvn "${maven_args[@]}"
+          else
+            mvn "${maven_args[@]}"
+          fi
 
       - name: Run distribution validation commands
         if: matrix.os == inputs['canonical-runner-os'] && matrix.java == inputs['canonical-java-version']
@@ -321,6 +356,7 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           COMMIT_SHA: ${{ github.sha }}
           GROUP_ID: ${{ inputs['group-id'] }}
+          ZIP_DESCRIPTORS: ${{ inputs['zip-descriptors'] }}
           ARTIFACT_ID: ${{ inputs['artifact-id'] }}
           HOP_VERSION: ${{ inputs['hop-version'] }}
           PLUGIN_ROOT: ${{ inputs['plugin-root'] }}
@@ -336,17 +372,32 @@ jobs:
           mkdir -p "$GITHUB_WORKSPACE/.ci/verified"
           version="$(mvn -q -s "$MAVEN_SETTINGS" -f "$POM_FILE" -DforceStdout help:evaluate -Dexpression=project.version)"
           artifact_name="${ARTIFACT_PREFIX}-canonical"
-          python3 "$GITHUB_WORKSPACE/.ci/hop-plugin-ci/scripts/build_manifest.py" \
-            --zip-glob "$ZIP_GLOB" \
-            --version "$version" \
-            --repository "$REPOSITORY" \
-            --commit-sha "$COMMIT_SHA" \
-            --group-id "$GROUP_ID" \
-            --artifact-id "$ARTIFACT_ID" \
-            --hop-version "$HOP_VERSION" \
-            --plugin-root "$PLUGIN_ROOT" \
-            --output "$GITHUB_WORKSPACE/.ci/verified/manifest.json"
-          zip_path="$(python3 - "$ZIP_GLOB" <<'PY'
+          upload_dir="$GITHUB_WORKSPACE/.ci/verified/upload"
+          rm -rf "$upload_dir"
+          mkdir -p "$upload_dir"
+          if [[ "$ZIP_DESCRIPTORS" != "[]" ]]; then
+            python3 "$GITHUB_WORKSPACE/.ci/hop-plugin-ci/scripts/build_plugin_bundle_manifest.py" \
+              --artifacts-json "$ZIP_DESCRIPTORS" \
+              --root "$PWD" \
+              --bundle-dir "$upload_dir" \
+              --version "$version" \
+              --repository "$REPOSITORY" \
+              --commit-sha "$COMMIT_SHA" \
+              --group-id "$GROUP_ID" \
+              --hop-version "$HOP_VERSION" \
+              --output "$GITHUB_WORKSPACE/.ci/verified/manifest.json"
+          else
+            python3 "$GITHUB_WORKSPACE/.ci/hop-plugin-ci/scripts/build_manifest.py" \
+              --zip-glob "$ZIP_GLOB" \
+              --version "$version" \
+              --repository "$REPOSITORY" \
+              --commit-sha "$COMMIT_SHA" \
+              --group-id "$GROUP_ID" \
+              --artifact-id "$ARTIFACT_ID" \
+              --hop-version "$HOP_VERSION" \
+              --plugin-root "$PLUGIN_ROOT" \
+              --output "$GITHUB_WORKSPACE/.ci/verified/manifest.json"
+            zip_path="$(python3 - "$ZIP_GLOB" <<'PY'
           from pathlib import Path
           import sys
 
@@ -355,23 +406,28 @@ jobs:
               raise SystemExit(f"Expected exactly one ZIP for {sys.argv[1]!r}, found {len(matches)}")
           print(matches[0])
           PY
-          )"
+            )"
+            cp "$zip_path" "$upload_dir/$(basename "$zip_path")"
+            cp "$GITHUB_WORKSPACE/.ci/verified/manifest.json" "$upload_dir/manifest.json"
+          fi
           cp "$GITHUB_WORKSPACE/.ci/verified/manifest.json" \
             "$GITHUB_WORKSPACE/.ci/verified/${artifact_name}.manifest.json"
-          upload_dir="$GITHUB_WORKSPACE/.ci/verified/upload"
-          rm -rf "$upload_dir"
-          mkdir -p "$upload_dir"
-          cp "$zip_path" "$upload_dir/$(basename "$zip_path")"
-          cp "$GITHUB_WORKSPACE/.ci/verified/${artifact_name}.manifest.json" \
+          cp "$GITHUB_WORKSPACE/.ci/verified/manifest.json" \
             "$upload_dir/${artifact_name}.manifest.json"
-          python3 - "$ADDITIONAL_VERIFIED_FILES" "$upload_dir" <<'PY'
+          python3 - "$ZIP_DESCRIPTORS" "$ADDITIONAL_VERIFIED_FILES" "$upload_dir" <<'PY'
           import json
           from pathlib import Path
           import shutil
           import sys
 
-          files = json.loads(sys.argv[1])
-          upload_dir = Path(sys.argv[2])
+          descriptors = json.loads(sys.argv[1])
+          files = json.loads(sys.argv[2])
+          upload_dir = Path(sys.argv[3])
+          if descriptors and files:
+              raise SystemExit(
+                  "additional-verified-files is not supported together with zip-descriptors; "
+                  "include additional validation data in the multi-artifact contract instead"
+              )
           for value in files:
               source = Path(value)
               if not source.is_file():

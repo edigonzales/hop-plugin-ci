@@ -44,6 +44,7 @@ def download_artifact(
     maven_settings: Path,
     output: Path,
     maven_options: str,
+    local_repository: Path | None,
 ) -> Path:
     output.parent.mkdir(parents=True, exist_ok=True)
     coordinate = artifact_coordinate(group_id, artifact_id, version, extension, classifier)
@@ -60,6 +61,8 @@ def download_artifact(
             "-Dmdep.stripVersion=true",
             "-Dmdep.overWriteIfNewer=true",
         ]
+        if local_repository is not None:
+            command.insert(1, f"-Dmaven.repo.local={local_repository}")
         subprocess.run(command, check=True)
         matches = sorted(temporary_path.glob(f"*.{extension}"))
         if len(matches) != 1:
@@ -81,6 +84,7 @@ def main() -> int:
     parser.add_argument("--maven-settings", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--maven-options", default="-U -B -ntp")
+    parser.add_argument("--local-repository", type=Path)
     args = parser.parse_args()
 
     download_artifact(
@@ -92,6 +96,7 @@ def main() -> int:
         maven_settings=args.maven_settings,
         output=args.output,
         maven_options=args.maven_options,
+        local_repository=args.local_repository,
     )
     print(f"Downloaded current Maven artifact {args.group_id}:{args.artifact_id}:{args.version}")
     return 0

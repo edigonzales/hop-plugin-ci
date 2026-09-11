@@ -12,16 +12,33 @@ on:
         required: true
         type: string
       pom-file:
-        description: Assembly POM used as Maven metadata
+        description: Root POM used to resolve the published version
         required: true
+        type: string
+      zip-descriptors:
+        description: Optional JSON array describing multiple canonical ZIP artifacts
+        required: false
+        default: '[]'
+        type: string
+      group-id:
+        description: Maven groupId used by the multi-ZIP contract
+        required: false
+        default: ''
+        type: string
+      hop-version:
+        description: Apache Hop version used by the multi-ZIP contract
+        required: false
+        default: ''
         type: string
       artifact-id:
-        description: Expected Maven artifactId
-        required: true
+        description: Legacy single-ZIP artifactId
+        required: false
+        default: ''
         type: string
       plugin-root:
-        description: Required installation root inside the ZIP
-        required: true
+        description: Legacy single-ZIP installation root
+        required: false
+        default: ''
         type: string
       expected-tag-prefix:
         description: Tag prefix used for release version validation
@@ -103,7 +120,8 @@ jobs:
           MAVEN_USERNAME: ${{ secrets.MAVEN_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}
 
-      - name: Validate and publish exact ZIP
+      - name: Validate and publish exact artifacts
+        id: validate
         env:
           MAVEN_USERNAME: ${{ secrets.MAVEN_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}
@@ -111,6 +129,9 @@ jobs:
           COMMIT_SHA: ${{ github.sha }}
           KIND: ${{ inputs['repository-kind'] }}
           POM_FILE: ${{ inputs['pom-file'] }}
+          ZIP_DESCRIPTORS: ${{ inputs['zip-descriptors'] }}
+          GROUP_ID: ${{ inputs['group-id'] }}
+          HOP_VERSION: ${{ inputs['hop-version'] }}
           ARTIFACT_ID: ${{ inputs['artifact-id'] }}
           PLUGIN_ROOT: ${{ inputs['plugin-root'] }}
           TAG_PREFIX: ${{ inputs['expected-tag-prefix'] }}
@@ -125,26 +146,48 @@ jobs:
           fi
           mapfile -t zips < <(find .ci/publish -type f -name '*.zip' -print | sort)
           mapfile -t manifests < <(find .ci/publish -type f -name '*.manifest.json' -print | sort)
-          if [[ ${#zips[@]} -ne 1 || ${#manifests[@]} -ne 1 ]]; then
-            echo "Expected exactly one ZIP and one manifest" >&2
-            find .ci/publish -type f -print >&2
-            exit 1
-          fi
           settings="$RUNNER_TEMP/hop-plugin-ci-publish-settings.xml"
           python3 "$GITHUB_WORKSPACE/.ci/hop-plugin-ci/scripts/write_maven_settings.py" \
             --output "$settings" --server-id "$REPOSITORY_ID"
           version="$(mvn -q -s "$settings" -U -B -ntp -f "$POM_FILE" -DforceStdout help:evaluate -Dexpression=project.version)"
-          python3 "$GITHUB_WORKSPACE/.ci/hop-plugin-ci/scripts/validate_manifest.py" \
-            --manifest "${manifests[0]}" \
-            --zip "${zips[0]}" \
-            --repository "$REPOSITORY" \
-            --commit-sha "$COMMIT_SHA" \
-            --artifact-id "$ARTIFACT_ID" \
-            --version "$version" \
-            --plugin-root "$PLUGIN_ROOT" \
-            --repository-kind "$KIND" \
-            --tag-prefix "$TAG_PREFIX" \
-            --git-ref "$GITHUB_REF"
+
+          if [[ "$ZIP_DESCRIPTORS" != "[]" ]]; then
+            if [[ ${#manifests[@]} -ne 1 ]]; then
+              echo "Expected exactly one multi-artifact manifest" >&2
+              find .ci/publish -type f -print >&2
+              exit 1
+            fi
+            python3 "$GITHUB_WORKSPACE/.ci/hop-plugin-ci/scripts/validate_plugin_bundle_manifest.py" \
+              --manifest "${manifests[0]}" \
+              --bundle-dir .ci/publish \
+              --artifacts-json "$ZIP_DESCRIPTORS" \
+              --repository "$REPOSITORY" \
+              --commit-sha "$COMMIT_SHA" \
+              --group-id "$GROUP_ID" \
+              --version "$version" \
+              --hop-version "$HOP_VERSION" \
+              --repository-kind "$KIND" \
+              --tag-prefix "$TAG_PREFIX" \
+              --git-ref "$GITHUB_REF"
+          else
+            if [[ ${#zips[@]} -ne 1 || ${#manifests[@]} -ne 1 ]]; then
+              echo "Expected exactly one ZIP and one manifest" >&2
+              find .ci/publish -type f -print >&2
+              exit 1
+            fi
+            python3 "$GITHUB_WORKSPACE/.ci/hop-plugin-ci/scripts/validate_manifest.py" \
+              --manifest "${manifests[0]}" \
+              --zip "${zips[0]}" \
+              --repository "$REPOSITORY" \
+              --commit-sha "$COMMIT_SHA" \
+              --artifact-id "$ARTIFACT_ID" \
+              --version "$version" \
+              --plugin-root "$PLUGIN_ROOT" \
+              --repository-kind "$KIND" \
+              --tag-prefix "$TAG_PREFIX" \
+              --git-ref "$GITHUB_REF"
+          fi
+
           python3 - "$EXTRA_MAVEN_ARTIFACTS" "$settings" "$REPOSITORY_ID" "$REPOSITORY_URL" <<'PY'
           import json
           import subprocess
@@ -164,9 +207,39 @@ jobs:
               ]
               subprocess.run(command, check=True)
           PY
-          mvn -s "$settings" -U -B -ntp org.apache.maven.plugins:maven-deploy-plugin:3.1.4:deploy-file \
-            -Dfile="${zips[0]}" \
-            -DpomFile="$POM_FILE" \
-            -Dpackaging=zip \
-            -DrepositoryId="$REPOSITORY_ID" \
-            -Durl="$REPOSITORY_URL"
+
+          if [[ "$ZIP_DESCRIPTORS" != "[]" ]]; then
+            python3 "$GITHUB_WORKSPACE/.ci/hop-plugin-ci/scripts/deploy_plugin_bundle.py" \
+              --manifest "${manifests[0]}" \
+              --bundle-dir .ci/publish \
+              --settings "$settings" \
+              --repository-id "$REPOSITORY_ID" \
+              --repository-url "$REPOSITORY_URL"
+          else
+            mvn -s "$settings" -U -B -ntp org.apache.maven.plugins:maven-deploy-plugin:3.1.4:deploy-file \
+              -Dfile="${zips[0]}" \
+              -DpomFile="$POM_FILE" \
+              -Dpackaging=zip \
+              -DrepositoryId="$REPOSITORY_ID" \
+              -Durl="$REPOSITORY_URL"
+          fi
+          echo "manifest=${manifests[0]}" >> "$GITHUB_OUTPUT"
+          echo "settings=$settings" >> "$GITHUB_OUTPUT"
+
+      - name: Verify public Maven ZIP resolution
+        if: inputs['zip-descriptors'] != '[]'
+        env:
+          MANIFEST: ${{ steps.validate.outputs.manifest }}
+          SETTINGS: ${{ steps.validate.outputs.settings }}
+          MAVEN_USERNAME: ${{ secrets.MAVEN_USERNAME }}
+          MAVEN_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          fresh_repository="$RUNNER_TEMP/plugin-public-verification-repository"
+          rm -rf "$fresh_repository"
+          python3 "$GITHUB_WORKSPACE/.ci/hop-plugin-ci/scripts/verify_published_plugin_bundle.py" \
+            --manifest "$MANIFEST" \
+            --bundle-dir .ci/publish \
+            --settings "$SETTINGS" \
+            --local-repository "$fresh_repository" \
+            --output-dir "$RUNNER_TEMP/plugin-public-verification"
