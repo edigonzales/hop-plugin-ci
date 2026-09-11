@@ -24,13 +24,13 @@ SETTINGS = """<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
           <id>sogeo-snapshots</id>
           <url>https://jars.interlis.guru/snapshots/</url>
           <releases><enabled>false</enabled></releases>
-          <snapshots><enabled>true</enabled><updatePolicy>always</updatePolicy></snapshots>
+          <snapshots><enabled>true</enabled><updatePolicy>always</updatePolicy><checksumPolicy>fail</checksumPolicy></snapshots>
         </repository>
         <repository>
           <id>jars-interlis</id>
           <url>https://jars.interlis.ch/</url>
           <releases><enabled>true</enabled></releases>
-          <snapshots><enabled>true</enabled></snapshots>
+          <snapshots><enabled>true</enabled><checksumPolicy>fail</checksumPolicy></snapshots>
         </repository>
       </repositories>
     </profile>

@@ -1,0 +1,182 @@
+name: Verify Maven library
+
+on:
+  workflow_call:
+    inputs:
+      java-versions:
+        required: true
+        type: string
+      runner-os:
+        required: true
+        type: string
+      canonical-runner-os:
+        required: false
+        default: ubuntu-latest
+        type: string
+      canonical-java-version:
+        required: false
+        default: "21"
+        type: string
+      maven-working-directory:
+        required: false
+        default: .
+        type: string
+      pom-file:
+        required: true
+        type: string
+      maven-options:
+        required: false
+        default: -U -B -ntp
+        type: string
+      maven-goals:
+        required: false
+        default: clean package
+        type: string
+      compatibility-goals:
+        required: false
+        default: clean test
+        type: string
+      artifact-descriptors:
+        description: JSON array describing the Maven artifacts in the canonical bundle
+        required: true
+        type: string
+      artifact-name-prefix:
+        required: true
+        type: string
+      hop-version:
+        required: true
+        type: string
+      ci-ref:
+        required: false
+        default: main
+        type: string
+    outputs:
+      canonical-artifact-name:
+        value: ${{ inputs['artifact-name-prefix'] }}-canonical
+
+permissions:
+  contents: read
+
+jobs:
+  validate-inputs:
+    runs-on: ubuntu-latest
+    env:
+      JAVA_VERSIONS: ${{ inputs['java-versions'] }}
+      RUNNER_OS_MATRIX: ${{ inputs['runner-os'] }}
+      CANONICAL_JAVA: ${{ inputs['canonical-java-version'] }}
+      CANONICAL_OS: ${{ inputs['canonical-runner-os'] }}
+    steps:
+      - name: Validate matrix and artifact descriptors
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+
+          java_versions = {str(value) for value in json.loads(os.environ['JAVA_VERSIONS'])}
+          runner_os = set(json.loads(os.environ['RUNNER_OS_MATRIX']))
+          if os.environ['CANONICAL_JAVA'] not in java_versions:
+              raise SystemExit('canonical-java-version is not present in java-versions')
+          if os.environ['CANONICAL_OS'] not in runner_os:
+              raise SystemExit('canonical-runner-os is not present in runner-os')
+          PY
+
+  build:
+    name: Verify (${{ matrix.os }}, Java ${{ matrix.java }})
+    needs: validate-inputs
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(inputs['runner-os']) }}
+        java: ${{ fromJSON(inputs['java-versions']) }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: edigonzales/hop-plugin-ci
+          ref: ${{ inputs['ci-ref'] }}
+          path: .ci/hop-plugin-ci
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+          cache: maven
+      - name: Configure Maven repositories
+        id: maven-settings
+        run: |
+          set -euo pipefail
+          settings="$RUNNER_TEMP/hop-plugin-ci-settings.xml"
+          python3 "$GITHUB_WORKSPACE/.ci/hop-plugin-ci/scripts/write_maven_settings.py" --output "$settings"
+          echo "path=$settings" >> "$GITHUB_OUTPUT"
+      - name: Build and test
+        working-directory: ${{ inputs['maven-working-directory'] }}
+        env:
+          MAVEN_OPTIONS: ${{ inputs['maven-options'] }}
+          MAVEN_GOALS: ${{ inputs['maven-goals'] }}
+          COMPATIBILITY_GOALS: ${{ inputs['compatibility-goals'] }}
+          MATRIX_OS: ${{ matrix.os }}
+          MATRIX_JAVA: ${{ matrix.java }}
+          CANONICAL_OS: ${{ inputs['canonical-runner-os'] }}
+          CANONICAL_JAVA: ${{ inputs['canonical-java-version'] }}
+          MAVEN_SETTINGS: ${{ steps.maven-settings.outputs.path }}
+        run: |
+          set -euo pipefail
+          read -r -a options <<< "$MAVEN_OPTIONS"
+          if [[ "$MATRIX_OS" == "$CANONICAL_OS" && "$MATRIX_JAVA" == "$CANONICAL_JAVA" ]]; then
+            read -r -a goals <<< "$MAVEN_GOALS"
+          else
+            read -r -a goals <<< "$COMPATIBILITY_GOALS"
+          fi
+          args=("${options[@]}" "-s" "$MAVEN_SETTINGS" "${goals[@]}")
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            xvfb-run -a mvn "${args[@]}"
+          else
+            mvn "${args[@]}"
+          fi
+      - name: Create canonical Maven artifact bundle
+        if: matrix.os == inputs['canonical-runner-os'] && matrix.java == inputs['canonical-java-version']
+        working-directory: ${{ inputs['maven-working-directory'] }}
+        env:
+          ARTIFACTS_JSON: ${{ inputs['artifact-descriptors'] }}
+          REPOSITORY: ${{ github.repository }}
+          COMMIT_SHA: ${{ github.sha }}
+          HOP_VERSION: ${{ inputs['hop-version'] }}
+          POM_FILE: ${{ inputs['pom-file'] }}
+          MAVEN_SETTINGS: ${{ steps.maven-settings.outputs.path }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/.ci/library-verified"
+          version="$(mvn -q -s "$MAVEN_SETTINGS" -f "$POM_FILE" -DforceStdout help:evaluate -Dexpression=project.version)"
+          python3 "$GITHUB_WORKSPACE/.ci/hop-plugin-ci/scripts/build_library_manifest.py" \
+            --artifacts-json "$ARTIFACTS_JSON" \
+            --root "$PWD" \
+            --bundle-dir "$GITHUB_WORKSPACE/.ci/library-verified/bundle" \
+            --version "$version" \
+            --repository "$REPOSITORY" \
+            --commit-sha "$COMMIT_SHA" \
+            --hop-version "$HOP_VERSION" \
+            --output "$GITHUB_WORKSPACE/.ci/library-verified/manifest.json"
+          cp "$GITHUB_WORKSPACE/.ci/library-verified/manifest.json" \
+            "$GITHUB_WORKSPACE/.ci/library-verified/bundle/manifest.json"
+      - name: Upload canonical Maven artifact bundle
+        if: matrix.os == inputs['canonical-runner-os'] && matrix.java == inputs['canonical-java-version']
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs['artifact-name-prefix'] }}-canonical
+          if-no-files-found: error
+          path: ${{ github.workspace }}/.ci/library-verified/bundle
+      - name: Retain test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports-${{ inputs['artifact-name-prefix'] }}-${{ matrix.os }}-jdk${{ matrix.java }}
+          if-no-files-found: ignore
+          path: |
+            ${{ inputs['maven-working-directory'] }}/**/target/surefire-reports/
+            ${{ inputs['maven-working-directory'] }}/**/target/failsafe-reports/

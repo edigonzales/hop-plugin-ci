@@ -33,6 +33,18 @@ timestamped repository filename.
 reproducible lock-file or distribution workflow. It is not the default
 dependency path for the pilot plugin builds.
 
+## Maven library contract
+
+`maven-library-verify.yml` and `maven-library-publish.yml` are the parallel
+contract for Maven libraries that do not produce an installable Hop ZIP. The
+caller declares a JSON artifact list containing the main file, POM, packaging,
+and optional classifier files. The canonical matrix cell collects the exact
+Parent-POM/JAR/classifier files into a SHA-256 manifest. The publish workflow
+validates and deploys that bundle with `deploy-file`; it never rebuilds it.
+
+Library snapshot consumers continue to declare the base `-SNAPSHOT` version.
+Maven resolves the current timestamp through normal repository metadata.
+
 The Maven repositories are:
 
 - snapshots: `https://jars.interlis.guru/snapshots/`
@@ -43,5 +55,6 @@ The publish workflow expects the caller to pass `MAVEN_USERNAME` and
 workflow; publication is reserved for main pushes and version tags.
 
 See `.github/workflows/plugin-verify.yml` and
-`.github/workflows/plugin-publish.yml` for the complete `workflow_call`
-interface.
+`.github/workflows/plugin-publish.yml` for the plugin `workflow_call` interface,
+and `.github/workflows/maven-library-verify.yml` plus
+`.github/workflows/maven-library-publish.yml` for the Maven library interface.
