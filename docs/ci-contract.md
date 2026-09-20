@@ -2,6 +2,9 @@
 
 This is the shared CI contract for Apache Hop plugins and Maven libraries using
 `edigonzales/hop-plugin-ci`. Read it before changing pipelines or test setup.
+The companion [Plugin Repository Contract v1](plugin-repository-contract.md)
+defines the required repository structure, README order, license metadata and
+documentation entry points for plugin repositories.
 Caller repositories keep their concrete commands and prerequisites in `AGENTS.md`.
 
 ## Authority and versions
@@ -149,6 +152,12 @@ and its root instructions for exact revisions, commands and prerequisites.
 
 ## Local use and onboarding
 
+When creating or standardizing a plugin repository, apply the
+[plugin repository contract](plugin-repository-contract.md) and run its
+reusable checker as a canonical `validation-commands` command. The repository
+contract supports `standard-plugin`, `desktop-plugin` and
+`multi-module-suite` profiles so existing suite layouts can remain explicit.
+
 To reproduce a verify build, use the caller's JDK, goals and extra arguments.
 Set `HOP_CI_DIR` to an absolute checkout path of `hop-plugin-ci` at the caller's
 helper revision (CI checks it out under `.ci/hop-plugin-ci`). From the caller
@@ -172,6 +181,8 @@ Copy and complete this entry in a new caller's root `AGENTS.md`:
 
 Before changing pipelines or test setup, read the
 [shared CI contract](https://github.com/edigonzales/hop-plugin-ci/blob/main/docs/ci-contract.md).
+Also read the
+[plugin repository contract](https://github.com/edigonzales/hop-plugin-ci/blob/main/docs/plugin-repository-contract.md).
 Use the interfaces at this repo's workflow and helper revisions; the documentation
 link follows main and does not upgrade those revisions.
 

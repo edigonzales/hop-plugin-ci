@@ -1,0 +1,28 @@
+name: Verify plugin
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    uses: edigonzales/hop-plugin-ci/.github/workflows/plugin-verify.yml@main
+    with:
+      ci-ref: main
+      java-versions: '["21", "25"]'
+      runner-os: '["ubuntu-latest", "macos-15", "windows-latest"]'
+      canonical-runner-os: ubuntu-latest
+      canonical-java-version: '21'
+      maven-working-directory: .
+      maven-goals: clean verify
+      compatibility-goals: clean test
+      pom-file: pom.xml
+      zip-glob: assemblies/target/__ARTIFACT_ID__-*.zip
+      validation-commands: '["python3 .ci/hop-plugin-ci/scripts/check-plugin-repository.py --profile standard-plugin"]'
+      artifact-name-prefix: __ARTIFACT_ID__
+      group-id: __GROUP_ID__
+      artifact-id: __ARTIFACT_ID__
+      hop-version: 2.19.0
+      plugin-root: __PLUGIN_ROOT__

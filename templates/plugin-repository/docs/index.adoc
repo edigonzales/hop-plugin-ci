@@ -1,0 +1,3 @@
+= __REPOSITORY_NAME__
+
+include::master.adoc[]
