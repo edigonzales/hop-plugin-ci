@@ -155,6 +155,9 @@ and its root instructions for exact revisions, commands and prerequisites.
 When creating or standardizing a plugin repository, apply the
 [plugin repository contract](plugin-repository-contract.md) and run its
 reusable checker as a canonical `validation-commands` command. The repository
+checker also validates marked ASCII GUI listings and their source stylesheet;
+callers verify stylesheet loading in the generated site. See the repository
+contract GUI migration note before adopting updated helpers. The repository
 contract supports `standard-plugin`, `desktop-plugin` and
 `multi-module-suite` profiles so existing suite layouts can remain explicit.
 

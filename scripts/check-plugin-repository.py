@@ -151,6 +151,59 @@ def _check_pom(root: Path, profile: str, errors: list[str]) -> None:
         errors.append("multi-module-suite must contain module POMs with parent metadata")
 
 
+def _check_gui_mockups(root: Path, errors: list[str]) -> None:
+    stylesheets: set[Path] = set()
+    for source in sorted((root / "docs").rglob("*.adoc")):
+        lines = source.read_text(encoding="utf-8").splitlines()
+        index = 0
+        while index < len(lines):
+            line = lines[index].strip()
+            if line == "[.gui-mockup]":
+                location = f"{source.relative_to(root)}:{index + 1}"
+                config_dir = source.parent
+                while config_dir != root and not (config_dir / "biblios.yml").is_file():
+                    config_dir = config_dir.parent
+                if config_dir == root:
+                    errors.append(f"{location}: gui-mockup needs an ancestor Biblios configuration")
+                else:
+                    stylesheets.add(config_dir / "site.css")
+                index += 1
+                if index >= len(lines) or lines[index].strip() != "----":
+                    errors.append(f"{location}: gui-mockup must be followed by a ---- listing block")
+                    continue
+                index += 1
+                while index < len(lines) and lines[index].strip() != "----":
+                    index += 1
+                if index == len(lines):
+                    errors.append(f"{location}: gui-mockup listing is not closed")
+            elif re.fullmatch(r"-{4,}|\.{4,}|/{4,}", line):
+                # Ignore examples of the marker inside ordinary listings/comments.
+                index += 1
+                while index < len(lines) and lines[index].strip() != line:
+                    index += 1
+            index += 1
+
+    for stylesheet in sorted(stylesheets):
+        relative = stylesheet.relative_to(root)
+        if not stylesheet.is_file():
+            errors.append(f"{relative}: missing gui-mockup stylesheet")
+            continue
+        css = re.sub(r"/\*.*?\*/", "", stylesheet.read_text(encoding="utf-8"), flags=re.S)
+        rules: dict[str, dict[str, str]] = {}
+        for selectors, body in re.findall(r"([^{}]+)\{([^{}]*)\}", css):
+            declarations = {}
+            for declaration in body.split(";"):
+                if ":" in declaration:
+                    name, value = declaration.split(":", 1)
+                    declarations[name.strip()] = value.strip()
+            for selector in selectors.split(","):
+                rules.setdefault(" ".join(selector.split()), {}).update(declarations)
+        for selector in (".listingblock.gui-mockup pre", "pre.gui-mockup"):
+            for name, expected in (("font-size", "0.75em"), ("line-height", "1.25")):
+                if rules.get(selector, {}).get(name) != expected:
+                    errors.append(f"{relative}: gui-mockup selector {selector!r} needs {name}: {expected}")
+
+
 def _check_docs(root: Path, profile: str, errors: list[str]) -> None:
     standard = (root / "docs/index.adoc", root / "docs/master.adoc", root / "docs/biblios.yml")
     nested = (
@@ -237,6 +290,7 @@ def validate(root: Path, profile: str) -> list[str]:
         errors.append("multi-module-suite needs e2e/ or a documented installed-E2E script")
 
     _check_docs(root, profile, errors)
+    _check_gui_mockups(root, errors)
     _check_documentation_links(root, errors)
     workflows = root / ".github/workflows"
     for name in ("verify.yml", "ci.yml", "biblios-docs.yml"):

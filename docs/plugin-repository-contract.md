@@ -77,6 +77,46 @@ must still expose those paths in its README and provide a documentation
 workflow. This is a supported variant, not an excuse to omit documentation
 entry points.
 
+## GUI documentation
+
+Document user-facing dialogs with ASCII GUI sketches in AsciiDoc listing blocks
+marked `[.gui-mockup]`. Keep labels, control order and panel placement aligned
+with the implementation. Use a separate sketch for each window, explain the
+navigation between them, and update sketches when the GUI changes. Use generic
+example values and explain textual substitutes for icons. Screenshots may
+supplement these maintainable sketches.
+
+Use `site.css` beside the nearest ancestor `biblios.yml` for each marked source
+(for example `docs/site.css` or `docs/biblios/site.css`). Include these rules:
+
+```css
+.listingblock.gui-mockup pre,
+pre.gui-mockup {
+  font-size: 0.75em;
+  line-height: 1.25;
+}
+```
+
+Listing blocks retain the renderer's monospace font and preserved whitespace.
+Do not reduce the font size of ordinary code blocks. The caller's documentation
+build must load this stylesheet after the theme, either as a linked asset or by
+appending it to the generated theme CSS. Merely placing the file in `docs/` does
+not activate it. Verify the generated HTML contains the GUI class and loads the
+CSS; visually check alignment, readable size and horizontal overflow. The
+scaffold contains a marked example and the stylesheet.
+
+The repository checker validates marked listing delimiters and both CSS selectors
+with the values above. It does not infer GUI content from arbitrary ASCII art,
+prove stylesheet loading, or compare sketches with running dialogs. Those remain
+caller build checks and review responsibilities. Repositories without marked GUI
+sketches do not need this stylesheet.
+
+Migration note (v1 GUI documentation extension): when adopting this checker
+revision, repositories with `[.gui-mockup]` blocks must provide the stylesheet
+beside their Biblios configuration and use closed `----` listing blocks. Existing
+pins are not upgraded automatically; callers tracking `main` receive this check
+with the next helper checkout. No workflow input changes are required.
+
 ## Profiles
 
 The reusable checker supports these profiles:

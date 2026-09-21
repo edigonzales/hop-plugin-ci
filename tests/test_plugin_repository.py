@@ -143,6 +143,38 @@ class PluginRepositoryContractTest(unittest.TestCase):
             errors = checker.validate(root, "standard-plugin")
             self.assertTrue(any("broken documentation link" in error for error in errors))
 
+    def test_gui_mockup_contract(self):
+        checker = load_checker()
+        css = (ROOT / "templates/plugin-repository/docs/site.css").read_text()
+        cases = [
+            ("valid", "[.gui-mockup]\n----\n| Dialog |\n----\n", css, None),
+            ("no GUI", "= Handbook\n", None, None),
+            ("ordinary listing", "----\n[.gui-mockup]\n----\n", None, None),
+            ("missing CSS", "[.gui-mockup]\n----\nGUI\n----\n", None, "missing gui-mockup stylesheet"),
+            ("wrong size", "[.gui-mockup]\n----\nGUI\n----\n", css.replace("0.75em", "1em"), "font-size"),
+            ("wrong spacing", "[.gui-mockup]\n----\nGUI\n----\n", css.replace("1.25", "2"), "line-height"),
+            ("missing selector", "[.gui-mockup]\n----\nGUI\n----\n", css.replace("pre.gui-mockup", "pre.other"), "pre.gui-mockup"),
+            ("comment only", "[.gui-mockup]\n----\nGUI\n----\n", "/* " + css[css.index(".listingblock"):] + " */", "font-size"),
+            ("not closed", "[.gui-mockup]\n----\nGUI\n", css, "not closed"),
+            ("no listing", "[.gui-mockup]\nGUI\n", css, "followed by"),
+        ]
+        for nested in (False, True):
+            for name, text, styles, expected in cases:
+                with self.subTest(nested=nested, case=name), tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    write_fixture(root, nested_docs=nested)
+                    docs = root / ("docs/biblios" if nested else "docs")
+                    source = docs / ("user/master.adoc" if nested else "master.adoc")
+                    source.write_text(text)
+                    if styles is not None:
+                        (docs / "site.css").write_text(styles)
+                    errors = []
+                    checker._check_gui_mockups(root, errors)
+                    if expected is None:
+                        self.assertEqual([], errors)
+                    else:
+                        self.assertTrue(any(expected in error for error in errors), errors)
+
     def test_scaffold_passes_contract(self):
         with tempfile.TemporaryDirectory() as directory:
             destination = Path(directory) / "my-plugin"
